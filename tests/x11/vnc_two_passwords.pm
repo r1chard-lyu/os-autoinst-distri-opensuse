@@ -100,10 +100,9 @@ sub prepare_vnc {
     send_key_until_needlematch 'tigervnc-desktop-loggedin', 'esc', 5, 5;
 }
 
-sub generate_vnc_events {
+sub connect_vncviewer {
     my $password = shift;
 
-    # Login into vnc display in RO/RW mode
     x11_start_program 'xterm';
     send_key 'super-left';
     enter_cmd "vncviewer $display -SecurityTypes=VncAuth ; echo vncviewer-finished >/dev/$serialdev ", timeout => 60;
@@ -116,6 +115,35 @@ sub generate_vnc_events {
         assert_screen 'vnc_password_dialog';
     }
     enter_cmd "$password";
+}
+
+# The fwupd polkit prompt shows when the testuser session starts. A view-only
+# (RO) connection cannot send input to it, so stay in RW mode for 10 seconds
+# before the RO/RW checks and cancel the prompt with Esc each time it shows.
+# Then close the viewer with its title bar "x".
+sub dismiss_polkit_prompt {
+    connect_vncviewer $options[1]->{pw};
+    for (1 .. 10) {
+        if (check_screen 'tigervnc-auth') {
+            send_key 'esc';
+            # Show if the prompt is gone after Esc or stays
+            save_screenshot;
+        }
+        sleep 1;
+    }
+    # "x" button at the top right of the 1024x768 TigerVNC window
+    mouse_set(1006, 49);
+    mouse_click;
+    wait_serial('vncviewer-finished', $timeout) || die 'vncviewer not closed by its title bar button';
+    enter_cmd 'exit';
+    wait_still_screen 2;
+}
+
+sub generate_vnc_events {
+    my $password = shift;
+
+    # Login into vnc display in RO/RW mode
+    connect_vncviewer $password;
     prepare_vnc;
     send_key 'super-left';
     wait_still_screen 2;
@@ -167,6 +195,8 @@ sub run {
     wait_still_screen 2;
     assert_screen 'vncviewer-console-right';
     assert_script_run("xauth add $display . $test_xauth");
+
+    dismiss_polkit_prompt;
 
     # Start vncviewer (rw & ro mode) and check if changes are processed by xev
     foreach my $opt (@options) {
